@@ -1,0 +1,31 @@
+# Python 3.11 기준. OpenAI 패키지는 사용하지 않음.
+# --- UI / 시각화 / 데이터 ---
+streamlit>=1.38
+plotly>=5.22
+pandas>=2.2
+openpyxl>=3.1
+pypdf>=4.2
+pillow>=10.0
+requests>=2.31
+python-dotenv>=1.0
+pydantic>=2.7
+
+# --- LangChain / LangGraph ---
+langchain>=0.3
+langchain-core>=0.3
+langchain-community>=0.3
+langchain-text-splitters>=0.3
+langgraph>=0.2
+langchain-google-genai>=2.0
+langchain-ollama>=0.2
+
+# --- Embedding / Vector DB ---
+# sentence-transformers는 torch를 요구함. CPU 전용 휠 설치는 README 참고.
+sentence-transformers>=3.0
+chromadb>=0.5
+langchain-chroma>=0.1.4
+
+# --- 테스트 / 산출물 생성 ---
+pytest>=8.0
+playwright>=1.45
+python-pptx>=1.0
