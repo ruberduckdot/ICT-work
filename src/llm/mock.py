@@ -172,5 +172,5 @@ class MockChatModel(BaseChatModel):
             body = tm.content if isinstance(tm.content, str) else str(tm.content)
             if len(body) > 1500:
                 body = body[:1500] + " …(생략)"
-            lines.append(f"\n### 도구: {tm.name}\n{body}")
+            lines.append(f"\n**도구: {tm.name}**\n\n{body}")
         return "\n".join(lines)
