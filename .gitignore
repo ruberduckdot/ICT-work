@@ -1,0 +1,21 @@
+# 비밀값
+.env
+
+# 가상환경·캐시
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 생성물 (재생성 가능)
+vectorstore/
+outputs/uploads/
+outputs/cache/
+outputs/diary/*.md
+*_과제제출.zip
+
+# 사용자 실데이터 원본 (.gitkeep만 커밋)
+data/raw/**/*
+!data/raw/**/
+!data/raw/**/.gitkeep
