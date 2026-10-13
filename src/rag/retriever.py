@@ -1,6 +1,7 @@
 """`manuals` 컬렉션 검색. 결과에는 출처(파일명, 페이지, 청크 id)와 유사도를 담는다."""
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -50,7 +51,8 @@ def format_for_llm(result: dict, max_chars: int = 700) -> str:
         return f"{NO_EVIDENCE}: '{result['query']}'와 관련된 재배 문서 구절을 찾지 못함 (유사도 임계값 {result['threshold']})."
     lines = [f"검색어: {result['query']} / 검색 결과 {len(result['hits'])}건"]
     for i, h in enumerate(result["hits"], 1):
-        text = h["text"].strip().replace("\n", " ")
-        lines.append(f"[{i}] 출처: {h['citation']} · 유사도 {h['score']:.3f}\n{text[:max_chars]}")
+        # 청크 안의 Markdown 제목(#)·인용(>) 기호는 답변 렌더링을 깨뜨리므로 제거
+        text = re.sub(r"(^|\s)(#{1,6}|>)\s+", r"\1", h["text"].strip()).replace("\n", " ")
+        lines.append(f"[{i}] 출처: {h['citation']} · 유사도 {h['score']:.3f}\n\n{text[:max_chars]}")
     lines.append("답변 시 위 [번호]와 출처를 인용할 것.")
     return "\n\n".join(lines)

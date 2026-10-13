@@ -61,9 +61,9 @@ def get_settings() -> Settings:
     if provider not in PROVIDERS:
         raise ValueError(f"LLM_PROVIDER는 {PROVIDERS} 중 하나여야 함: {provider!r}")
     try:
-        threshold = float(_env("RAG_SCORE_THRESHOLD", "0.80"))
+        threshold = float(_env("RAG_SCORE_THRESHOLD", "0.855"))
     except ValueError:
-        threshold = 0.80
+        threshold = 0.855
     llm_model = _env("LLM_MODEL")
     return Settings(
         llm_provider=provider,

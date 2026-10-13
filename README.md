@@ -60,6 +60,7 @@ cp .env.example .env                 # 필요한 값만 채움
 ```
 
 - OpenAI 패키지는 사용하지 않음.
+- CPU 휠 파일은 `download-r2.pytorch.org`에서 내려받음. 방화벽·프록시 환경이면 `download.pytorch.org`와 함께 허용해야 함. 막혀 있으면 `pip install torch`(PyPI 기본 휠, CUDA 라이브러리 포함으로 용량 큼)로 대체해도 CPU에서 동작함.
 - 최초 실행 시 Embedding 모델(`intfloat/multilingual-e5-small`)을 Hugging Face에서 내려받음. 내려받지 못하거나 torch가 없으면 **해싱 폴백 Embedding**으로 동작하고 사이드바에 경고가 표시됨(검색 품질 낮음).
 - 캡처 스크립트용 브라우저: `playwright install chromium` (이미 Chromium이 있으면 `PW_CHROMIUM_PATH`로 경로 지정).
 
@@ -73,7 +74,7 @@ cp .env.example .env                 # 필요한 값만 채움
 | `GOOGLE_API_KEY` | gemini 사용 시 필수 |
 | `OLLAMA_BASE_URL` | 기본 `http://localhost:11434` |
 | `EMBEDDING_MODEL` | 기본 `intfloat/multilingual-e5-small`, `BAAI/bge-m3` 전환 가능, `hash`는 폴백 강제 |
-| `RAG_SCORE_THRESHOLD` | 실 Embedding 유사도 임계값(기본 0.80, 실데이터로 조정 필요) |
+| `RAG_SCORE_THRESHOLD` | 실 Embedding 유사도 임계값. 기본 0.855 (e5-small·샘플 매뉴얼 기준 보정값, 실문서 색인 후 재조정 권장. bge-m3로 바꾸면 다시 보정 필요) |
 | `KAMIS_API_KEY`, `KAMIS_API_ID` | 선택. 있으면 KAMIS Open API 우선 조회 |
 | `KAMIS_ITEM_CODE`, `KAMIS_KIND_CODE`, `KAMIS_CATEGORY_CODE`, `KAMIS_RANK_CODE` | KAMIS 품목·품종 코드. 추측해 넣지 않았으므로 KAMIS 코드표에서 확인 후 지정 |
 
@@ -144,6 +145,7 @@ zip 포함: 소스(app.py, src, scripts, tests), requirements.txt, README.md, .e
 ## 9. 검증 현황과 한계
 
 - 이 저장소의 테스트·캡처·PPT는 모두 `LLM_PROVIDER=mock`으로 생성됨. mock은 이미지를 실제로 분석하지 않고 '판단불가'를 반환하며, 상담 답변은 도구 결과를 묶은 고정 형식임.
-- 개발 환경에서는 Hugging Face 접속이 차단되어 **실 Embedding 검증을 하지 못했고 해싱 폴백으로 검증함**. `RAG_SCORE_THRESHOLD`(0.80)는 실모델 기준으로 조정 필요.
+- 실 Embedding(`intfloat/multilingual-e5-small`)으로 테스트 37건을 통과함. 샘플 매뉴얼(7청크)에서 측정한 top-1 유사도는 관련 질의 6건이 0.876~0.905, 무관 질의 5건이 0.796~0.833이었음. 기본 임계값 0.855는 이 두 값의 중간값임. 문서가 바뀌면 다시 보정해야 함.
+- 해싱 폴백(`EMBEDDING_MODEL=hash`)으로도 테스트 36건 통과, 실모델 전용 1건 skip.
 - KAMIS Open API의 엔드포인트·파라미터·응답 형식은 **[미확인]**(코드 주석 표기). 확인 전까지는 파일 다운로드 방식을 권장함.
 - ViT·YOLO 학습 코드는 없음(학습 데이터 없음). 이미지 분석은 VLM Zero-shot이며 정확도는 측정하지 않음.

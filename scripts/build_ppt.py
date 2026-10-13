@@ -303,7 +303,7 @@ def s_rag(prs):
     ], size=14)
     box_label(s, 6.9, 4.2, 5.8, 2.6, "운영 처리", [
         "앱 최초 실행 시 vectorstore가 비면 자동 색인",
-        "EMBEDDING_MODEL=BAAI/bge-m3 전환 가능",
+        "EMBEDDING_MODEL=BAAI/bge-m3 전환 가능 · 기본 임계값 0.855(e5-small 보정값)",
         "모델 로드 실패 시 해싱 폴백 + 사이드바 경고, 백엔드 변경 시 자동 재색인",
     ], fill=WARN_BG, title_color=ACCENT, size=14)
 
@@ -390,7 +390,7 @@ def s_verify(prs, test_line: str):
     checks = [
         "test_llm: mock이 표준 tool_calls AIMessage 생성, 429 백오프",
         "test_data: 샘플 대체, KAMIS 컬럼 매핑, KOSIS wide→long(cp949)",
-        "test_rag: 샘플 질의 3건 출처 반환, 무관 질의 '문서 근거 없음'",
+        "test_rag: 실 e5 Embedding으로 샘플 질의 3건 출처 반환, 무관 질의 '문서 근거 없음'",
         "test_vision: 스키마 준수, 캐시 재호출 없음, 1회 재요청, analysis_logs",
         "test_agent: 질의 유형별 Tool 선택 4건, 반복 6회 제한",
     ]
@@ -399,7 +399,7 @@ def s_verify(prs, test_line: str):
     text(s, 0.85, 4.6, 11.6, 2.1, [
         ("실모델 검증 필요 (이 개발 환경에서 미수행)", {"bold": True, "color": ACCENT, "size": 16}),
         "Gemini·Ollama 실제 호출(Tool 선택 품질, VLM 판독 정확도) — API 키·모델 서버 없음",
-        "sentence-transformers 실 Embedding — 개발 환경 네트워크 정책으로 모델 다운로드 불가, 해싱 폴백으로 검증",
+        "실 Embedding은 검증 완료(e5-small): 관련 질의 top 유사도 ≥ 0.876, 무관 질의 ≤ 0.833 → 임계값 0.855 (샘플 문서 7청크 기준)",
         "KAMIS Open API 파라미터·응답 형식 — [미확인], 접속 불가",
     ], size=14, space_after=5)
 
@@ -409,7 +409,7 @@ def s_limits(prs):
     rows = [
         ("데이터", "가격·생산 통계와 이미지가 샘플/더미", "KAMIS·KOSIS 파일과 실제 재배 사진 투입"),
         ("Vision", "Zero-shot VLM, 정량 정확도 미측정", "라벨링 이미지셋 구축 후 정확도 평가, 필요 시 ViT/YOLO 미세조정"),
-        ("RAG", "해싱 폴백은 어휘 겹침 기반, 임계값 미튜닝", "실 Embedding 기준 임계값 튜닝, 공식 매뉴얼 색인"),
+        ("RAG", "임계값 0.855는 샘플 문서 7청크로만 보정", "공식 매뉴얼 색인 후 질의셋으로 임계값 재보정"),
         ("Agent", "mock은 키워드 규칙이라 복합 질의 미처리", "실모델로 다중 Tool 연쇄 호출 평가"),
         ("가격 API", "KAMIS 파라미터·품목코드 [미확인]", "공식 문서 확인 후 품목코드 .env 설정"),
     ]

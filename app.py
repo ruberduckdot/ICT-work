@@ -123,6 +123,11 @@ def save_upload(uploaded) -> Path:
     return path
 
 
+def md_safe(text: str) -> str:
+    """'12~18 ℃' 같은 범위 표기가 Markdown 취소선으로 렌더링되지 않게 물결표를 이스케이프."""
+    return text.replace("~", "\\~")
+
+
 def rel(path: Path | str) -> str:
     p = Path(path)
     return str(p.relative_to(ROOT)) if p.is_absolute() and p.is_relative_to(ROOT) else str(p)
@@ -142,7 +147,7 @@ def render_analysis_result(record: dict) -> None:
     c1.metric("생육 단계", r["growth_stage"])
     c2.metric("병해충 의심", r["disease_suspected"])
     c3.metric("신뢰도", f"{r['confidence']:.2f}")
-    st.markdown(f"**요약**: {r['summary_ko']}")
+    st.markdown(md_safe(f"**요약**: {r['summary_ko']}"))
     st.markdown("**관찰 근거**\n" + "\n".join(f"- {e}" for e in r["visual_evidence"] or ["없음"]))
     st.markdown("**권장 조치**\n" + "\n".join(f"- {a}" for a in r["recommended_actions"] or ["없음"]))
     st.caption(f"캐시 {'적중(재호출 없음)' if record['cached'] else '미적중(신규 호출)'} · SHA-256 {record['sha256'][:16]}… · "
@@ -220,7 +225,7 @@ def render_chat_tab() -> None:
         with st.chat_message(turn["role"]):
             if turn.get("image"):
                 st.image(turn["image"], width=160)
-            st.markdown(turn["content"])
+            st.markdown(md_safe(turn["content"]))
             if turn.get("trace"):
                 render_trace(turn["trace"])
 
@@ -275,7 +280,7 @@ def render_diary_tab() -> None:
         st.download_button("Markdown 다운로드", d["md"], file_name=Path(d["path"]).name, mime="text/markdown",
                            key="diary_dl")
         with st.container(border=True):
-            st.markdown(d["md"])
+            st.markdown(md_safe(d["md"]))
 
 
 def main() -> None:

@@ -65,3 +65,18 @@ def test_hash_embedding_fallback_is_normalized():
     _, backend, _ = get_embeddings()
     assert backend  # 실모델 또는 HASH_BACKEND
     assert isinstance(HASH_BACKEND, str)
+
+
+def test_real_e5_embedding_separates_relevant_queries(store_dir):
+    """sentence-transformers와 모델이 있을 때만 실행: 실 Embedding 백엔드와 임계값 분리도 확인."""
+    pytest.importorskip("sentence_transformers")
+    _, backend, fallback = get_embeddings()
+    if backend == HASH_BACKEND:
+        pytest.skip(f"실 Embedding 미사용: {fallback or 'EMBEDDING_MODEL=hash'}")
+    assert backend == "intfloat/multilingual-e5-small"
+    good = [retriever.search(q, threshold=0.0, persist_dir=store_dir)["hits"][0]["score"]
+            for q in ("적정 생육 온도", "푸른곰팡이병 방제", "환기 관리")]
+    bad = [retriever.search(q, threshold=0.0, persist_dir=store_dir)["hits"][0]["score"]
+           for q in ("자동차 엔진오일 교체 주기", "비트코인 시세 전망")]
+    thr = retriever.default_threshold(backend)
+    assert min(good) >= thr > max(bad)
