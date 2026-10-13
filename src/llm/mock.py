@@ -19,7 +19,6 @@ from typing import Any, Literal, Sequence
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_core.utils.function_calling import convert_to_openai_tool
 
 MOCK_TAG = "[데모 모드 · mock 모델 응답]"
 
@@ -120,7 +119,7 @@ class MockChatModel(BaseChatModel):
         return "mock-chat"
 
     def bind_tools(self, tools: Sequence[Any], *, tool_choice: Any = None, **kwargs: Any):
-        names = [convert_to_openai_tool(t)["function"]["name"] for t in tools]
+        names = [getattr(t, "name", None) or getattr(t, "__name__", str(t)) for t in tools]
         return self.model_copy(update={"bound_tool_names": names})
 
     def _generate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
