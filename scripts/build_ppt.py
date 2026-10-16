@@ -156,13 +156,113 @@ def screenshot(slide, stem, x, y, w, h, top=0, left=0):
     text(slide, x, y + h + 0.05, w, 0.35, f"{path.name} · {label}", size=10, color=ACCENT if is_mock else MUTED)
 
 
-def run_tests(skip: bool) -> str:
+def table(slide, x, y, w, rows, widths, size=12, row_h=0.42, accent_col=None, header_fill=FOREST):
+    """rows[0]은 헤더. 셀 값의 '\n'은 줄바꿈. widths 합은 w와 같게 지정."""
+    shape = slide.shapes.add_table(len(rows), len(rows[0]), Inches(x), Inches(y), Inches(w), Inches(row_h * len(rows)))
+    tbl = shape.table
+    for j, wv in enumerate(widths):
+        tbl.columns[j].width = Inches(wv)
+    for i, row in enumerate(rows):
+        tbl.rows[i].height = Inches(row_h)
+        for j, val in enumerate(row):
+            cell = tbl.cell(i, j)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = header_fill if i == 0 else (TINT if i % 2 else WHITE)
+            cell.margin_left = cell.margin_right = Inches(0.08)
+            cell.margin_top = cell.margin_bottom = Inches(0.04)
+            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+            cell.text_frame.word_wrap = True
+            for k, line in enumerate(str(val).split("\n")):
+                para = cell.text_frame.paragraphs[0] if k == 0 else cell.text_frame.add_paragraph()
+                r = para.add_run()
+                r.text = line
+                color = WHITE if i == 0 else (ACCENT if accent_col is not None and j == accent_col else INK)
+                _font(r, size, bold=(i == 0 or j == 0), color=color)
+    return tbl
+
+
+def fit_shot(slide, stem, x, y, w, h, caption=True):
+    """비율을 유지해 박스 안에 배치. 박스보다 세로로 긴 이미지는 위쪽부터 박스 비율로 잘라 씀."""
+    path, is_mock = pick_shot(stem)
+    if path is None:
+        rect(slide, x, y, w, h, fill=TINT)
+        text(slide, x, y + h / 2 - 0.3, w, 0.6, f"캡처 없음: {stem}", size=12, color=MUTED, align=PP_ALIGN.CENTER)
+        return
+    img = Image.open(path)
+    box_ratio = h / w
+    if img.height / img.width > box_ratio:  # 세로로 길면 위쪽을 잘라 사용
+        src = crop_to(path, w / h)
+        pw, ph, px, py = w, h, x, y
+    else:  # 가로로 길면 폭에 맞춤
+        src = path
+        pw, ph = w, w * img.height / img.width
+        px, py = x, y  # 위쪽 정렬
+    pic = slide.shapes.add_picture(str(src), Inches(px), Inches(py), Inches(pw), Inches(ph))
+    pic.line.color.rgb = RGBColor(0xC9, 0xD3, 0xC4)
+    pic.line.width = Pt(1)
+    if caption:
+        label = "mock 캡처" if is_mock else "실모델 캡처"
+        text(slide, px, py + ph + 0.03, pw, 0.3, f"{path.stem} · {label}", size=10, color=ACCENT if is_mock else MUTED)
+
+
+TEST_DESC = {
+    "test_llm": "factory·mock tool_calls 형식, 429 백오프",
+    "test_data": "샘플 대체, KAMIS 컬럼 매핑, KOSIS wide→long",
+    "test_rag": "출처 반환, 문서 근거 없음, e5 접두어, 실 Embedding 분리도",
+    "test_vision": "JSON 스키마, 캐시, 1회 재요청, analysis_logs",
+    "test_agent": "질의별 Tool 선택 4건, 6회 제한, 오류 처리",
+    "test_zip": "제출 zip 포함·제외 규칙",
+}
+
+
+def run_tests(skip: bool) -> tuple[str, list[tuple]]:
+    """(요약 줄, 모듈별 [모듈, 설명, 통과, 실패, skip]) — pytest를 실제 실행한 결과."""
     if skip:
-        return "테스트 미실행 (--skip-tests)"
-    proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"], cwd=ROOT,
-                          capture_output=True, text=True, env={**__import__("os").environ, "LLM_PROVIDER": "mock"})
+        return "테스트 미실행 (--skip-tests)", []
+    import os
+    import xml.etree.ElementTree as ET
+
+    junit = TMP / "junit.xml"
+    proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--junitxml={junit}"],
+                          cwd=ROOT, capture_output=True, text=True, env={**os.environ, "LLM_PROVIDER": "mock"})
     lines = [l for l in proc.stdout.strip().splitlines() if re.search(r"\d+ (passed|failed)", l)]
-    return lines[-1].strip("= ") if lines else f"pytest 실행 결과 해석 실패 (exit {proc.returncode})"
+    summary = lines[-1].strip("= ") if lines else f"pytest 실행 결과 해석 실패 (exit {proc.returncode})"
+    counts: dict[str, list[int]] = {}
+    if junit.exists():
+        for case in ET.parse(junit).getroot().iter("testcase"):
+            mod = case.get("classname", "").split(".")[-1]
+            c = counts.setdefault(mod, [0, 0, 0])
+            if case.find("failure") is not None or case.find("error") is not None:
+                c[1] += 1
+            elif case.find("skipped") is not None:
+                c[2] += 1
+            else:
+                c[0] += 1
+    rows = [(m, TEST_DESC.get(m, ""), *c) for m, c in sorted(counts.items())]
+    return summary, rows
+
+
+RAG_QUERIES = [("적정 생육 온도", True), ("푸른곰팡이병 방제", True), ("환기 관리", True),
+               ("버섯파리 방제 방법", True), ("자동차 엔진오일 교체 주기", False), ("비트코인 시세 전망", False),
+               ("오늘 날씨 어때", False)]
+
+
+def measure_rag() -> tuple[str, float, list[tuple]]:
+    """(Embedding 백엔드, 임계값, [질의, 구분, top-1 유사도, 출처, 판정]) — 빌드 시 실제 검색 결과."""
+    from src.rag import retriever
+    from src.rag.embeddings import default_threshold, get_embeddings
+
+    _, backend, _ = get_embeddings()
+    thr = default_threshold(backend)
+    rows = []
+    for q, relevant in RAG_QUERIES:
+        hit = retriever.search(q, threshold=0.0)["hits"][0]
+        passed = hit["score"] >= thr
+        verdict = ("근거 제시" if passed else "문서 근거 없음")
+        ok = passed == relevant
+        rows.append((q, "관련" if relevant else "무관", f"{hit['score']:.3f}", hit["citation"],
+                     verdict + (" (기대와 일치)" if ok else " (기대와 불일치)")))
+    return backend, thr, rows
 
 
 # ---------------------------------------------------------------- 슬라이드
@@ -338,32 +438,6 @@ def s_agent(prs):
          size=13, color=MUTED)
 
 
-def s_ui(prs):
-    s = new_slide(prs, "UI: AI 상담 (탭 3)", "검색 근거와 Tool 호출 이력을 st.expander로 표시 · 대화 이력은 session_state")
-    screenshot(s, "03_ai_chat", 0.6, 1.7, 8.0, 5.2, top=0, left=300)
-    text(s, 8.9, 1.8, 3.9, 5.0, [
-        ("화면 구성", {"bold": True, "color": FOREST, "size": 17}),
-        "질문 입력 + 이미지 첨부(선택)",
-        "업로드 이미지는 outputs/uploads/에 저장 후 경로를 메시지에 첨부",
-        "Tool별 표시: 입력 JSON, 검색 근거 표, 가격 요약 표, 일지 저장 경로",
-        ("mock 모드 답변은 도구 결과를 그대로 묶은 고정 형식이며 LLM 요약이 아님", {"color": ACCENT, "size": 13}),
-    ], size=14, space_after=8)
-
-
-def s_diary(prs):
-    s = new_slide(prs, "영농일지 (탭 4 · write_farm_diary)", "src/diary/writer.py · outputs/diary/YYYY-MM-DD.md 저장 + 다운로드")
-    screenshot(s, "04_farm_diary", 0.6, 1.7, 7.0, 5.2, left=300)
-    text(s, 7.9, 1.8, 4.9, 5.0, [
-        ("고정 Markdown 양식", {"bold": True, "color": FOREST, "size": 17}),
-        "1 날짜 · 2 재배사 환경(℃/%/ppm 표) · 3 생육 상태",
-        "4 병해충 · 5 작업 내용 · 6 익일 계획",
-        ("입력", {"bold": True, "color": FOREST, "size": 17}),
-        "날짜, 온도·습도·CO2 직접 입력, 작업 메모",
-        "당일 이미지 분석 결과 선택(캐시에서 조회)",
-        ("LLM은 '익일 계획'만 생성 · 입력에 없는 수치 생성 금지", {"color": MUTED, "size": 13}),
-    ], size=14, space_after=7)
-
-
 def s_demo(prs):
     s = new_slide(prs, "시연 시나리오", "LLM_PROVIDER=mock으로 키 없이 전체 흐름 재현 가능")
     steps = [
@@ -382,26 +456,202 @@ def s_demo(prs):
         text(s, 3.9, y + 0.1, 8.8, 0.5, b, size=15)
 
 
-def s_verify(prs, test_line: str):
-    s = new_slide(prs, "검증 결과", "모든 검증은 LLM_PROVIDER=mock으로 수행 (키 없이)")
-    rect(s, 0.6, 1.8, 5.2, 2.2, fill=FOREST)
-    text(s, 0.8, 1.95, 4.9, 0.5, "pytest (빌드 시 실제 실행 결과)", size=15, color=TINT)
-    text(s, 0.8, 2.55, 4.9, 1.3, test_line, size=26, bold=True, color=WHITE)
-    checks = [
-        "test_llm: mock이 표준 tool_calls AIMessage 생성, 429 백오프",
-        "test_data: 샘플 대체, KAMIS 컬럼 매핑, KOSIS wide→long(cp949)",
-        "test_rag: 실 e5 Embedding으로 샘플 질의 3건 출처 반환, 무관 질의 '문서 근거 없음'",
-        "test_vision: 스키마 준수, 캐시 재호출 없음, 1회 재요청, analysis_logs",
-        "test_agent: 질의 유형별 Tool 선택 4건, 반복 6회 제한",
+def s_requirements(prs, test_rows):
+    s = new_slide(prs, "요구사항 ↔ 구현 ↔ 검증", "과제 요구사항 원문 기준 대응표 · 검증은 빌드 시 pytest 실행 결과")
+    by_mod = {r[0]: r for r in test_rows}
+
+    def res(*mods):
+        got = [by_mod[m] for m in mods if m in by_mod]
+        if not got:
+            return "미실행"
+        p, f = sum(g[2] for g in got), sum(g[3] for g in got)
+        return f"{p}건 통과" + (f" / {f}건 실패" if f else "")
+
+    rows = [
+        ("요구사항", "구현 내용", "구현 파일", "검증"),
+        ("1. 데이터 선정", "가격·지역 생산·매뉴얼·이미지, data/raw 우선 → SAMPLE 대체", "src/data/loaders.py, kamis.py", res("test_data")),
+        ("2. 대시보드", "Plotly 차트 4종, KPI 3종, 기간·지역 필터, 출처 표기", "src/dashboard/charts.py, app.py", "Playwright 캡처 · 예외 0건"),
+        ("3. 이미지 분석", "VLM Zero-shot, Pydantic JSON, SHA-256 캐시", "src/vision/analyzer.py", res("test_vision")),
+        ("3. RAG", "청킹 → e5 Embedding → Chroma(manuals, analysis_logs)", "src/rag/*.py", res("test_rag")),
+        ("4. AI Agent", "LangGraph agent↔ToolNode, Tool 4종, 최대 6회", "src/agent/graph.py, tools.py", res("test_agent", "test_llm")),
+        ("5. UI", "업로드·질문·대시보드·검색 근거·Tool 이력·영농일지", "app.py", f"Playwright 캡처 {len(list(SHOTS.glob('*.png')))}장"),
+        ("6. 제출물", "캡처·PPT·zip 자동 생성", "scripts/*.py", res("test_zip")),
     ]
-    text(s, 6.2, 1.8, 6.5, 3.0, checks, size=14, bullet=True, space_after=8)
-    rect(s, 0.6, 4.5, 12.1, 2.3, fill=WARN_BG)
-    text(s, 0.85, 4.6, 11.6, 2.1, [
-        ("실모델 검증 필요 (이 개발 환경에서 미수행)", {"bold": True, "color": ACCENT, "size": 16}),
-        "Gemini·Ollama 실제 호출(Tool 선택 품질, VLM 판독 정확도) — API 키·모델 서버 없음",
-        "실 Embedding은 검증 완료(e5-small): 관련 질의 top 유사도 ≥ 0.876, 무관 질의 ≤ 0.833 → 임계값 0.855 (샘플 문서 7청크 기준)",
-        "KAMIS Open API 파라미터·응답 형식 — [미확인], 접속 불가",
-    ], size=14, space_after=5)
+    table(s, 0.6, 1.75, 12.1, rows, [1.75, 5.0, 3.25, 2.1], size=12, row_h=0.6, accent_col=3)
+
+
+def s_stack(prs):
+    s = new_slide(prs, "기술 스택과 선정 근거", "공급자·Embedding은 환경변수로 전환 (코드 수정 없음)")
+    rows = [
+        ("구성요소", "적용 기술", "선정 근거", "대안 · 전환 방법"),
+        ("UI · 시각화", "Streamlit, Plotly", "Python 단일 언어로 탭·업로드·차트 구현", "—"),
+        ("Agent", "LangGraph StateGraph + ToolNode", "반복 횟수 제어·Tool 이력 추출이 명시적", "create_react_agent"),
+        ("LLM · VLM", "mock / Gemini / Ollama", "키 없이 개발·테스트(mock), 실모델은 env로 전환", "LLM_PROVIDER, LLM_MODEL, VLM_MODEL"),
+        ("Embedding", "sentence-transformers\nmultilingual-e5-small", "로컬 실행, API 키 불필요, 한국어 지원", "EMBEDDING_MODEL=BAAI/bge-m3 · hash 폴백"),
+        ("Vector DB", "Chroma (persist: vectorstore/)", "파일 기반 영속화, 별도 서버 불필요", "—"),
+        ("구조화 출력", "Pydantic v2 스키마 검증", "허용값 외 응답 차단, 실패 시 1회 재요청", "—"),
+        ("데이터", "pandas, openpyxl, pypdf", "KAMIS xlsx·KOSIS csv(cp949)·PDF 로딩", "KAMIS Open API(선택)"),
+        ("산출물", "Playwright, python-pptx, pytest", "캡처·PPT·테스트를 스크립트로 재현", "—"),
+    ]
+    table(s, 0.6, 1.75, 12.1, rows, [1.8, 3.2, 4.1, 3.0], size=12, row_h=0.56)
+
+
+def s_dataflow(prs):
+    s = new_slide(prs, "데이터 흐름", "입력 데이터별 처리 경로와 저장 위치")
+    lanes = [
+        ("가격·생산 통계", "data/raw/price · production\n(없으면 data/sample)", "loaders.py\n컬럼 매핑 · wide→long", "대시보드 차트·KPI\nget_mushroom_price"),
+        ("재배 매뉴얼", "data/raw/docs (pdf·md)\n(없으면 샘플 매뉴얼)", "ingest.py\n청킹 600/100 → e5", "Chroma manuals\n→ rag_search"),
+        ("재배 이미지", "업로드 → outputs/uploads\n(시연: data/raw/images)", "analyzer.py\nVLM → Pydantic JSON", "outputs/cache · analysis_logs\n→ 분석 탭·일지"),
+        ("농가 입력", "온도·습도·CO2·작업 메모\n(탭 4 또는 상담 메시지)", "writer.py\n고정 양식 + 익일 계획", "outputs/diary/\n날짜별 Markdown → 다운로드"),
+    ]
+    heads = ["입력", "저장 · 대체 규칙", "처리 모듈", "결과 · 사용처"]
+    xs, ws = [0.6, 3.05, 6.35, 9.65], [2.15, 2.95, 2.95, 3.05]
+    for j, hd in enumerate(heads):
+        text(s, xs[j], 1.65, ws[j], 0.4, hd, size=14, bold=True, color=MUTED)
+    for i, lane in enumerate(lanes):
+        y = 2.1 + i * 1.22
+        for j, val in enumerate(lane):
+            fill = FOREST if j == 0 else (TINT if j != 2 else WHITE)
+            rect(s, xs[j], y, ws[j], 1.0, fill=fill, line=None if j != 2 else MOSS)
+            lines = val.split("\n")
+            text(s, xs[j] + 0.1, y + 0.08, ws[j] - 0.2, 0.9,
+                 [(lines[0], {"bold": True, "size": 14, "color": WHITE if j == 0 else FOREST})] +
+                 [(l, {"size": 12, "color": INK}) for l in lines[1:]], space_after=2, anchor=MSO_ANCHOR.MIDDLE)
+            if j < 3:
+                arrow(s, xs[j] + ws[j], y + 0.5, xs[j + 1], y + 0.5)
+
+
+def s_dashboard_detail1(prs):
+    s = new_slide(prs, "대시보드 상세 ① KPI · 가격 시계열", "도매/소매 구분, 일·월 단위 전환 (일 단위 → 월평균 리샘플링)")
+    fit_shot(s, "11_dashboard_kpi", 0.6, 1.65, 6.0, 1.55)
+    rows = [("KPI", "산출 방식"), ("최근 도매가", "필터 기간 내 마지막 조사일 도매가"),
+            ("전월 대비", "도매 월평균(MS) 최근 2개월 증감률"), ("최대 생산 지역", "최근 연도 시도별 생산량 최댓값")]
+    table(s, 6.9, 1.65, 5.8, rows, [1.7, 4.1], size=12, row_h=0.39)
+    fit_shot(s, "12_chart_price_daily", 0.6, 3.65, 6.0, 2.85)
+    fit_shot(s, "16_chart_price_monthly", 6.75, 3.65, 6.0, 2.85)
+    text(s, 0.6, 6.95, 12.1, 0.35, "모든 수치는 SAMPLE 합성값(실측 아님) · 차트 하단과 대시보드 상단에 출처 표기", size=11, color=ACCENT)
+
+
+def s_dashboard_detail2(prs):
+    s = new_slide(prs, "대시보드 상세 ② 생산 통계 · 계절성", "범주색 고정 순서, 크기는 단일 hue 순차 램프, 증감률은 발산 팔레트(중립 회색)")
+    fit_shot(s, "13_chart_region", 0.6, 1.65, 3.9, 4.25)
+    fit_shot(s, "14_chart_yoy", 4.7, 1.65, 3.9, 4.25)
+    fit_shot(s, "15_chart_seasonality", 8.8, 1.65, 3.9, 1.6)
+    text(s, 8.8, 3.75, 3.9, 2.4, [
+        ("차트 구성", {"bold": True, "color": FOREST, "size": 15}),
+        "② 시도별 생산량: 연도 선택, 가로 막대",
+        "③ 전년 대비 증감률: 시도 × 연도 히트맵",
+        "④ 계절성: 연 × 월 도매 월평균 히트맵",
+        ("이중 축 미사용 · 지역 필터 연동", {"color": MUTED, "size": 12}),
+    ], size=13, space_after=5)
+    text(s, 0.6, 6.4, 12.1, 0.35, "SAMPLE 합성값이므로 지역 순위·증감률을 실제 통계로 해석하면 안 됨", size=11, color=ACCENT)
+
+
+def s_vision_flow(prs):
+    s = new_slide(prs, "이미지 분석 처리 흐름과 출력 스키마", "같은 이미지·같은 모델은 캐시로 재호출하지 않음")
+    steps = [("이미지", "업로드 저장\nSHA-256 계산"), ("캐시 조회", "sha + 공급자 + 모델\n적중 시 즉시 반환"),
+             ("VLM 호출", "base64 JPEG ≤1024px\n관찰 근거만 기술"), ("검증", "Pydantic 파싱\n실패 → 1회 재요청"),
+             ("저장", "outputs/cache\nChroma analysis_logs")]
+    for i, (t, b) in enumerate(steps):
+        x = 0.6 + i * 2.5
+        rect(s, x, 1.7, 2.15, 1.35, fill=FOREST if i == 2 else TINT)
+        text(s, x + 0.1, 1.76, 1.95, 1.25, [(t, {"bold": True, "size": 15, "color": WHITE if i == 2 else FOREST})] +
+             [(l, {"size": 12, "color": TINT if i == 2 else INK}) for l in b.split("\n")], space_after=2)
+        if i < 4:
+            arrow(s, x + 2.15, 2.37, x + 2.5, 2.37)
+    rows = [
+        ("필드", "타입", "허용값 · 규칙"),
+        ("growth_stage", "enum", "균사생장 / 원기형성 / 자실체생장 / 수확적기 / 과숙 / 판단불가"),
+        ("disease_suspected", "enum", "정상 / 푸른곰팡이병 / 세균성갈색무늬병 / 버섯파리 피해 / 기타 / 판단불가"),
+        ("confidence", "float", "0.0 ~ 1.0 (범위 밖이면 검증 실패), 불확실하면 ≤ 0.3"),
+        ("visual_evidence", "list[str]", "이미지에서 관찰된 근거만"),
+        ("recommended_actions", "list[str]", "권장 조치"),
+        ("summary_ko", "str", "한국어 요약 · 2회 파싱 실패 시 판단불가 객체 반환(캐시 안 함)"),
+    ]
+    table(s, 0.6, 3.4, 7.3, rows, [2.0, 1.0, 4.3], size=11, row_h=0.47)
+    fit_shot(s, "21_vision_result", 8.15, 3.4, 4.55, 3.3)
+
+
+def s_rag_eval(prs, rag):
+    backend, thr, rows = rag
+    s = new_slide(prs, "RAG 검색 실측", f"빌드 시 실제 검색 결과 · Embedding: {backend} · 임계값 {thr}")
+    table(s, 0.6, 1.75, 12.1, [("질의", "구분", "top-1 유사도", "top-1 출처", "판정")] + rows,
+          [3.0, 1.0, 1.6, 3.2, 3.3], size=12, row_h=0.5, accent_col=4)
+    text(s, 0.6, 6.0, 12.1, 1.0, [
+        "임계값 미만이면 Tool 결과를 '문서 근거 없음'으로 반환하고, Agent는 추측 답변을 하지 않음",
+        ("보정 근거: 샘플 매뉴얼 7청크 기준 관련 질의 최소와 무관 질의 최대의 중간값. 실문서 색인 후 재보정 필요",
+         {"color": MUTED, "size": 12}),
+    ], size=13, space_after=4)
+
+
+def s_tools(prs):
+    s = new_slide(prs, "Tool 명세", "모든 Tool은 (LLM용 텍스트, UI용 artifact)를 함께 반환 — content_and_artifact")
+    rows = [
+        ("Tool", "입력", "호출 조건", "LLM에 주는 결과", "UI 표시(artifact)"),
+        ("rag_search", "query", "재배 방법·환경·방제·문서 요약", "구절 + [번호]·출처·유사도", "검색 근거 표"),
+        ("analyze_mushroom_image", "image_path,\nquestion", "[첨부 이미지 경로]가 있는 질문", "생육 단계·병해충·신뢰도·근거", "구조화 JSON"),
+        ("write_farm_diary", "date, notes", "\"일지 써줘\" 등", "저장 경로 + 일지 본문", "저장 경로"),
+        ("get_mushroom_price", "period\n(1w~all)", "가격·시세 질문", "도매·소매 기간 요약 + 출처", "요약 표"),
+    ]
+    table(s, 0.6, 1.75, 12.1, rows, [2.6, 1.6, 2.8, 2.9, 2.2], size=12, row_h=0.72)
+    rows2 = [
+        ("안전·제한", "내용"),
+        ("이미지 경로", "outputs/uploads, data/raw/images, data/sample/images만 허용"),
+        ("반복 제한", "최대 6회, 마지막 회차는 Tool 없이 최종 답변"),
+        ("오류 처리", "429·연결 오류 지수 백오프 2회 → 'API 한도 초과 또는 모델 서버 미연결'"),
+    ]
+    table(s, 0.6, 5.55, 12.1, rows2, [2.6, 9.5], size=12, row_h=0.36)
+
+
+def s_chat_detail(prs):
+    s = new_slide(prs, "AI 상담 ① 문서 질의 → rag_search", "Agent 응답과 Tool 호출 이력(입력·검색 근거 표·결과 요약)")
+    fit_shot(s, "31_chat_rag", 0.6, 1.65, 6.0, 5.1)
+    fit_shot(s, "35_chat_trace_rag", 6.85, 1.65, 5.85, 4.4)
+    text(s, 6.85, 6.35, 5.85, 0.6, "mock 응답은 Tool 결과를 그대로 묶은 고정 형식이며 LLM 요약이 아님",
+         size=12, color=ACCENT)
+
+
+def s_chat_tools(prs):
+    s = new_slide(prs, "AI 상담 ② 질의 유형별 Tool 선택", "같은 대화창에서 가격·이미지·일지 요청을 각각 다른 Tool로 처리")
+    items = [("32_chat_price", "\"최근 가격 알려줘\" → get_mushroom_price(1m)"),
+             ("33_chat_image", "이미지 첨부 + \"상태 어때?\" → analyze_mushroom_image"),
+             ("34_chat_diary", "\"오늘 일지 써줘. 온도 16도…\" → write_farm_diary")]
+    for i, (stem, cap) in enumerate(items):
+        x = 0.6 + i * 4.1
+        text(s, x, 1.62, 3.9, 0.55, cap, size=12, bold=True, color=FOREST)
+        fit_shot(s, stem, x, 2.25, 3.9, 4.5)
+
+
+def s_diary2(prs):
+    s = new_slide(prs, "영농일지 (탭 4 · write_farm_diary)", "src/diary/writer.py · outputs/diary/YYYY-MM-DD.md 저장 + 다운로드")
+    fit_shot(s, "04_farm_diary", 0.6, 1.65, 4.6, 5.1)
+    fit_shot(s, "41_diary_markdown", 5.4, 1.65, 3.6, 5.1)
+    rows = [("양식 항목", "채우는 값"), ("1 날짜", "입력 날짜"), ("2 재배사 환경", "온도 ℃ · 습도 % · CO2 ppm"),
+            ("3 생육 상태", "선택한 분석 결과"), ("4 병해충", "선택한 분석 결과 + 근거"),
+            ("5 작업 내용", "작업 메모"), ("6 익일 계획", "LLM 생성(입력 외 수치 금지)")]
+    table(s, 9.2, 1.65, 3.5, rows, [1.35, 2.15], size=11, row_h=0.5)
+    text(s, 9.2, 5.35, 3.5, 1.3, ["미입력 환경값은 '미입력'으로 표기", "모델 오류 시 익일 계획만 실패 문구로 대체"],
+         size=12, bullet=True, color=MUTED)
+
+
+def s_verify2(prs, summary, test_rows):
+    s = new_slide(prs, "검증 결과", "LLM_PROVIDER=mock (키 없이) · 빌드 시 pytest 실제 실행")
+    rect(s, 0.6, 1.7, 3.9, 1.9, fill=FOREST)
+    text(s, 0.8, 1.82, 3.6, 0.4, "pytest 전체", size=14, color=TINT)
+    text(s, 0.8, 2.3, 3.6, 1.2, summary, size=22, bold=True, color=WHITE)
+    rows = [("테스트 파일", "검증 내용", "통과", "실패", "skip")] + [
+        (m, d, str(p), str(f), str(k)) for m, d, p, f, k in test_rows]
+    if len(rows) == 1:
+        rows.append(("—", "테스트 미실행", "-", "-", "-"))
+    table(s, 4.8, 1.7, 7.9, rows, [1.5, 4.3, 0.7, 0.7, 0.7], size=11, row_h=0.42)
+    rows2 = [
+        ("항목", "상태", "비고"),
+        ("실 Embedding (e5-small)", "검증 완료", "RAG 실측 슬라이드 참고"),
+        ("Gemini·Ollama 실제 호출", "미검증", "API 키·모델 서버 없음 → mock으로 대체 검증"),
+        ("VLM 판독 정확도", "미측정", "라벨링 이미지셋 필요"),
+        ("KAMIS Open API", "미검증", "파라미터 [미확인], 접속 불가"),
+    ]
+    table(s, 0.6, 4.75, 12.1, rows2, [3.4, 1.8, 6.9], size=12, row_h=0.42, accent_col=1)
 
 
 def s_limits(prs):
@@ -426,23 +676,33 @@ def s_limits(prs):
 def build(skip_tests: bool = False) -> Path:
     prs = Presentation()
     prs.slide_width, prs.slide_height = W, H
-    test_line = run_tests(skip_tests)
+    summary, test_rows = run_tests(skip_tests)
+    rag = measure_rag()
     s_title(prs)
     s_overview(prs)
+    s_requirements(prs, test_rows)
+    s_stack(prs)
     s_data(prs)
     s_arch(prs)
+    s_dataflow(prs)
     s_dashboard(prs)
+    s_dashboard_detail1(prs)
+    s_dashboard_detail2(prs)
     s_vision(prs)
+    s_vision_flow(prs)
     s_rag(prs)
+    s_rag_eval(prs, rag)
     s_agent(prs)
-    s_ui(prs)
-    s_diary(prs)
+    s_tools(prs)
+    s_chat_detail(prs)
+    s_chat_tools(prs)
+    s_diary2(prs)
     s_demo(prs)
-    s_verify(prs, test_line)
+    s_verify2(prs, summary, test_rows)
     s_limits(prs)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     prs.save(OUT)
-    print(f"saved {OUT.relative_to(ROOT)} ({len(prs.slides)} slides) · pytest: {test_line}")
+    print(f"saved {OUT.relative_to(ROOT)} ({len(prs.slides)} slides) · pytest: {summary} · RAG: {rag[0]}")
     return OUT
 
 
