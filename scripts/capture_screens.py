@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -89,8 +90,45 @@ def capture(port: int, suffix: str) -> list[Path]:
         def panel():
             return page.locator("[role=tabpanel]:visible")
 
-        # 1) 대시보드
+        def fit_viewport() -> None:
+            height = page.evaluate("""() => {
+                const m = document.querySelector('[data-testid=stMain]') || document.querySelector('section.main');
+                return m ? m.scrollHeight : document.body.scrollHeight; }""")
+            page.set_viewport_size({"width": 1440, "height": min(max(int(height) + 40, 900), 7000)})
+            page.wait_for_timeout(800)
+
+        def element_shot(name: str, locator) -> None:
+            """PPT 상세 슬라이드용 요소 단위 캡처 (전체 화면 캡처와 별도)."""
+            fit_viewport()
+            path = OUT / f"{name}{suffix}.png"
+            locator.screenshot(path=str(path))
+            page.set_viewport_size({"width": 1440, "height": 1600})
+            saved.append(path)
+            print(f"saved {path.relative_to(ROOT)}")
+
+        def clip_shot(name: str, locators) -> None:
+            """여러 요소를 감싸는 영역을 한 장으로 캡처."""
+            fit_viewport()
+            boxes = [loc.bounding_box() for loc in locators]
+            x0, y0 = min(b["x"] for b in boxes) - 12, min(b["y"] for b in boxes) - 12
+            x1 = max(b["x"] + b["width"] for b in boxes) + 12
+            y1 = max(b["y"] + b["height"] for b in boxes) + 12
+            path = OUT / f"{name}{suffix}.png"
+            page.screenshot(path=str(path), clip={"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}, full_page=True)
+            page.set_viewport_size({"width": 1440, "height": 1600})
+            saved.append(path)
+            print(f"saved {path.relative_to(ROOT)}")
+
+        # 1) 대시보드 (+ KPI·차트 상세)
         shot("01_dashboard")
+        charts = panel().locator(".js-plotly-plot")
+        clip_shot("11_dashboard_kpi", [panel().locator("[data-testid=stAlert]").first,
+                                       panel().locator("[data-testid=stMetric]").nth(2)])
+        for i, name in enumerate(("12_chart_price_daily", "13_chart_region", "14_chart_yoy", "15_chart_seasonality")):
+            element_shot(name, charts.nth(i))
+        panel().get_by_text("월", exact=True).click()
+        page.wait_for_timeout(2500)
+        element_shot("16_chart_price_monthly", panel().locator(".js-plotly-plot").nth(0))
 
         # 2) 이미지 분석
         page.get_by_role("tab", name="이미지 분석").click()
@@ -100,12 +138,22 @@ def capture(port: int, suffix: str) -> list[Path]:
         panel().get_by_text("구조화 출력(JSON)").wait_for(timeout=180_000)
         panel().get_by_text("구조화 출력(JSON)").click()
         shot("02_image_analysis")
+        element_shot("21_vision_result", panel().locator("[data-testid=stHorizontalBlock]").first)
 
-        # 3) AI 상담: 문서 질의 → rag_search, 가격 질의 → get_mushroom_price
+        # 3) AI 상담: 문서 → rag_search, 가격 → get_mushroom_price, 이미지 → analyze, 일지 → write_farm_diary
         page.get_by_role("tab", name="AI 상담").click()
-        for q in ("느타리버섯 자실체 생육기 적정 온도와 환기 관리는?", "최근 가격 알려줘"):
+        questions = [
+            ("느타리버섯 자실체 생육기 적정 온도와 환기 관리는?", None),
+            ("최근 가격 알려줘", None),
+            ("이 버섯 상태 어때?", pick_image()),
+            ("오늘 일지 써줘. 온도 16도 습도 90% CO2 950ppm, 3동 환기 2회", None),
+        ]
+        for q, img in questions:
             n = page.get_by_text("🔧 도구 호출").count()
             panel().locator("textarea").fill(q)
+            if img:
+                panel().locator("input[type=file]").set_input_files(str(img))
+                page.wait_for_timeout(1500)
             panel().get_by_role("button", name="질문하기").click()
             page.wait_for_function(f"document.body.innerText.split('🔧 도구 호출').length - 1 > {n}", timeout=180_000)
             page.wait_for_timeout(1500)
@@ -113,6 +161,10 @@ def capture(port: int, suffix: str) -> list[Path]:
             exp.click()
             page.wait_for_timeout(300)
         shot("03_ai_chat")
+        answers = panel().locator("[data-testid=stChatMessage]")
+        for i, name in enumerate(("31_chat_rag", "32_chat_price", "33_chat_image", "34_chat_diary")):
+            element_shot(name, answers.nth(2 * i + 1))  # 짝수=사용자, 홀수=Agent 응답
+        element_shot("35_chat_trace_rag", panel().locator("[data-testid=stExpander]").first)
 
         # 4) 영농일지
         page.get_by_role("tab", name="영농일지").click()
@@ -125,6 +177,10 @@ def capture(port: int, suffix: str) -> list[Path]:
         panel().get_by_role("button", name="일지 생성").click()
         panel().get_by_text("저장 완료").wait_for(timeout=180_000)
         shot("04_farm_diary")
+        # 일지 본문을 담은 테두리 컨테이너 중 가장 안쪽 블록
+        diary_box = panel().locator("[data-testid=stVerticalBlock]").filter(
+            has=page.get_by_role("heading", name=re.compile("영농일지 —"))).last
+        element_shot("41_diary_markdown", diary_box)
         browser.close()
     return saved
 

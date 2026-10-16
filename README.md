@@ -126,8 +126,8 @@ LLM_PROVIDER=mock streamlit run app.py    # 키 없이 데모 모드
 ```bash
 pytest                                     # 전체 테스트 (키 없이 mock)
 python -m src.rag.ingest                   # 매뉴얼 재색인
-python scripts/capture_screens.py          # 4개 탭 캡처 → docs/screenshots/ (mock이면 *_mock.png)
-python scripts/build_ppt.py                # docs/발표자료.pptx 재빌드 (pytest 실행 결과 반영)
+python scripts/capture_screens.py          # 4개 탭 전체 + 차트·응답 상세 캡처 → docs/screenshots/ (mock이면 *_mock.png)
+python scripts/build_ppt.py                # docs/발표자료.pptx 재빌드 (22장, pytest·RAG 실측 결과를 빌드 시 반영)
 python scripts/make_zip.py --name 홍길동    # 홍길동_과제제출.zip 생성
 ```
 
